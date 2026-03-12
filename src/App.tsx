@@ -1,38 +1,42 @@
 import { useState, useRef } from 'react'
-import { VOICE_MODELS, cloneVoice, generateTTS } from './api'
+import { VOICE_MODELS, generate } from './api'
 
-type Status = 'idle' | 'cloning' | 'generating' | 'done' | 'error'
+type Status = 'idle' | 'generating' | 'done' | 'error'
 
 export default function App() {
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5111'
   const [audioFile, setAudioFile] = useState<File | null>(null)
+  const [groqApiKey, setGroqApiKey] = useState('')
   const [transcription, setTranscription] = useState('')
-  const [script, setScript] = useState('')
+  const [feedback, setFeedback] = useState('')
   const [modelId, setModelId] = useState(VOICE_MODELS[0].id)
+  const [language, setLanguage] = useState('English')
   const [status, setStatus] = useState<Status>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [generatedScript, setGeneratedScript] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef(false)
   const [dragging, setDragging] = useState(false)
 
   const canSubmit =
+    groqApiKey.trim() !== '' &&
     audioFile !== null &&
     transcription.trim() !== '' &&
-    script.trim() !== '' &&
-    status !== 'cloning' &&
+    feedback.trim() !== '' &&
     status !== 'generating'
 
   async function handleSubmit() {
     if (!audioFile) return
-    setStatus('cloning')
+    setStatus('generating')
     setErrorMsg('')
     setAudioUrl(null)
+    setGeneratedScript('')
     try {
-      const voiceId = await cloneVoice({ audioFile, transcription, modelId })
-      setStatus('generating')
-      const blob = await generateTTS({ clonedVoiceId: voiceId, script, modelId })
+      const { blob, generatedScript: script } = await generate({ audioFile, transcription, feedback, groqApiKey, language, modelId, baseUrl })
       const url = URL.createObjectURL(blob)
       setAudioUrl(url)
+      setGeneratedScript(script)
       setStatus('done')
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Unknown error')
@@ -55,7 +59,7 @@ export default function App() {
     if (file) setAudioFile(file)
   }
 
-  const isLoading = status === 'cloning' || status === 'generating'
+  const isLoading = status === 'generating'
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center py-12 px-4">
@@ -66,6 +70,19 @@ export default function App() {
       </div>
 
       <div className="w-full max-w-2xl flex flex-col gap-6">
+
+        {/* Groq API Key */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Groq API Key</label>
+          <input
+            type="password"
+            value={groqApiKey}
+            onChange={(e) => setGroqApiKey(e.target.value)}
+            placeholder="gsk_..."
+            disabled={isLoading}
+            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent disabled:opacity-50"
+          />
+        </div>
 
         {/* Voice Model */}
         <div className="flex flex-col gap-1.5">
@@ -125,33 +142,49 @@ export default function App() {
         {/* Transcription */}
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-            Audio Transcription <span className="text-red-500">*</span>
+            Transcription <span className="text-red-500">*</span>
           </label>
           <textarea
             rows={3}
             value={transcription}
             onChange={(e) => setTranscription(e.target.value)}
-            placeholder="Paste the transcription of the uploaded audio…"
+            placeholder="What was said in the uploaded audio…"
             disabled={isLoading}
             className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent disabled:opacity-50"
           />
         </div>
 
-
-        {/* New Script */}
+        {/* Feedback */}
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-            New TTS Script <span className="text-red-500">*</span>
+            Feedback <span className="text-red-500">*</span>
           </label>
           <textarea
-            rows={4}
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-            placeholder="Enter the script to synthesize with the cloned voice…"
+            rows={3}
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="What to change about the script…"
             disabled={isLoading}
             className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent disabled:opacity-50"
           />
         </div>
+
+        {/* Qwen language selector */}
+        {modelId === 'qwen' && (
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Language</label>
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              disabled={isLoading}
+              className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent disabled:opacity-50"
+            >
+              {['English', 'Chinese', 'Japanese', 'Korean', 'French', 'German', 'Spanish'].map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Submit */}
         <button
@@ -162,7 +195,7 @@ export default function App() {
           {isLoading ? (
             <>
               <Spinner />
-              {status === 'cloning' ? 'Cloning voice…' : 'Generating TTS…'}
+              Generating…
             </>
           ) : (
             'Clone & Generate'
@@ -178,16 +211,24 @@ export default function App() {
 
         {/* Result */}
         {status === 'done' && audioUrl && (
-          <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-5 flex flex-col gap-3">
-            <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Generated Audio</p>
-            <audio controls src={audioUrl} className="w-full accent-violet-500" />
-            <a
-              href={audioUrl}
-              download="generated.mp3"
-              className="text-center text-sm text-violet-400 hover:text-violet-300 transition-colors"
-            >
-              Download
-            </a>
+          <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-5 flex flex-col gap-4">
+            {generatedScript && (
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Generated Script</p>
+                <p className="text-sm text-zinc-200 bg-zinc-800 rounded-lg px-3 py-2.5 leading-relaxed">{generatedScript}</p>
+              </div>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Generated Audio</p>
+              <audio controls src={audioUrl} className="w-full accent-violet-500" />
+              <a
+                href={audioUrl}
+                download="generated.wav"
+                className="text-center text-sm text-violet-400 hover:text-violet-300 transition-colors"
+              >
+                Download
+              </a>
+            </div>
           </div>
         )}
       </div>

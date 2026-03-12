@@ -4,67 +4,59 @@ export type VoiceModel = {
 }
 
 export const VOICE_MODELS: VoiceModel[] = [
+  { id: 'resemble', label: 'Resemble (ChatterboxTTS)' },
   { id: 'qwen', label: 'Qwen' },
-  { id: 'resemble', label: 'Resemble' },
 ]
 
-export type CloneVoiceParams = {
+export type GenerateParams = {
   audioFile: File
   transcription: string
+  feedback: string
+  groqApiKey: string
   modelId: string
+  baseUrl: string
+  // Qwen-only
+  language?: string
 }
 
-export type GenerateTTSParams = {
-  clonedVoiceId: string
-  script: string
-  modelId: string
+export type GenerateResult = {
+  blob: Blob
+  generatedScript: string
 }
 
 /**
- * Clone a voice from an audio sample.
- * Replace this implementation with your actual API call.
- * Expected to return a voice ID string.
+ * Routes to /chatterbox/generate or /qwen/generate based on modelId.
+ * Sends feedback to server; server uses Ollama (qwen2.5:7b) to generate the TTS script.
+ * Returns audio blob + the generated script from X-Generated-Script header.
+ * Server runs at localhost:5111 (SSH tunnel: ssh -L 5111:localhost:5111 ra_krish@129.10.224.228)
  */
-export async function cloneVoice(params: CloneVoiceParams): Promise<string> {
+export async function generate(params: GenerateParams): Promise<GenerateResult> {
   const formData = new FormData()
   formData.append('audio', params.audioFile)
   formData.append('transcription', params.transcription)
-  formData.append('model_id', params.modelId)
+  formData.append('feedback', params.feedback)
+  formData.append('groq_api_key', params.groqApiKey)
 
-  const response = await fetch('/api/clone-voice', {
+  let endpoint: string
+  if (params.modelId === 'qwen') {
+    endpoint = '/qwen/generate'
+    if (params.language) formData.append('language', params.language)
+  } else {
+    endpoint = '/chatterbox/generate'
+  }
+
+  const base = params.baseUrl.replace(/\/$/, '')
+  const response = await fetch(`${base}${endpoint}`, {
     method: 'POST',
     body: formData,
   })
 
   if (!response.ok) {
     const error = await response.text()
-    throw new Error(`Voice cloning failed: ${error}`)
+    throw new Error(`Generation failed: ${error}`)
   }
 
-  const data = await response.json()
-  return data.voice_id as string
-}
-
-/**
- * Generate TTS audio using the cloned voice.
- * Replace this implementation with your actual API call.
- * Expected to return a Blob (audio/mpeg).
- */
-export async function generateTTS(params: GenerateTTSParams): Promise<Blob> {
-  const response = await fetch('/api/generate-tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      voice_id: params.clonedVoiceId,
-      script: params.script,
-      model_id: params.modelId,
-    }),
-  })
-
-  if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`TTS generation failed: ${error}`)
-  }
-
-  return response.blob()
+  const generatedScript = decodeURIComponent(response.headers.get('X-Generated-Script') ?? '')
+  const blob = await response.blob()
+  return { blob, generatedScript }
 }
